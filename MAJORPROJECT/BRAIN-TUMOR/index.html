@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🧠 Brain Tumor Detection Dashboard</title>
+
+  <style>
+    body {
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: linear-gradient(135deg, #dfe9f3, #ffffff);
+      text-align: center;
+      padding: 40px;
+    }
+    h1 {
+      color: #222;
+      margin-bottom: 20px;
+    }
+    input[type=file] {
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #aaa;
+      cursor: pointer;
+      background: white;
+    }
+    .container {
+      margin-top: 30px;
+    }
+    canvas {
+      max-width: 90%;
+      border: 3px solid #555;
+      border-radius: 10px;
+      margin: 10px;
+    }
+    .info {
+      text-align: left;
+      display: inline-block;
+      background: #fff;
+      border-radius: 10px;
+      padding: 15px 20px;
+      margin-top: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 6px;
+      text-align: center;
+    }
+    th {
+      background: #eee;
+    }
+    .loader {
+      font-size: 18px;
+      color: #555;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧠 Brain Tumor Detection Dashboard</h1>
+  <input type="file" id="imageUpload" accept="image/*" />
+  <div id="result" class="container"></div>
+
+  <script>
+    const API_URL = "https://detect.roboflow.com/brain-tumors-detection-0kd0m/1";
+    const API_KEY = "uvXufc6uBtPwsolLsnid";
+
+    // ⭐ Tumor Stage Function (Normalized)
+    function getTumorStage(width, height, imageWidth, imageHeight) {
+      const tumorArea = width * height;
+      const imageArea = imageWidth * imageHeight;
+      const ratio = tumorArea / imageArea; // relative % of tumor
+
+      if (ratio < 0.01) return "Stage 1 – Very Early";     // <1%
+      if (ratio < 0.03) return "Stage 2 – Early";          // 1–3%
+      if (ratio < 0.06) return "Stage 3 – Developed";      // 3–6%
+      return "Stage 4 – Critical";                         // >6%
+    }
+
+    document.getElementById("imageUpload").addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Image = reader.result.split(",")[1];
+        const img = new Image();
+        img.src = reader.result;
+
+        document.getElementById("result").innerHTML = `
+          <div class="loader">⏳ Analyzing image... Please wait</div>
+        `;
+
+        img.onload = async () => {
+          const imageWidth = img.width;
+          const imageHeight = img.height;
+
+          try {
+            const response = await fetch(`${API_URL}?api_key=${API_KEY}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: base64Image,
+            });
+
+            const json = await response.json();
+            const predictions = json.predictions || [];
+
+            let detailsHTML = "";
+
+            predictions.forEach((p, i) => {
+              const stage = getTumorStage(
+                p.width,
+                p.height,
+                imageWidth,
+                imageHeight
+              );
+
+              detailsHTML += `
+                <tr>
+                  <td>${i + 1}</td>
+                  <td>${p.class}</td>
+                  <td>${(p.confidence * 100).toFixed(2)}%</td>
+                  <td>${p.x.toFixed(1)}</td>
+                  <td>${p.y.toFixed(1)}</td>
+                  <td>${p.width.toFixed(1)}</td>
+                  <td>${p.height.toFixed(1)}</td>
+                  <td><b>${stage}</b></td>
+                </tr>
+              `;
+            });
+
+            document.getElementById("result").innerHTML = `
+              <h3>Prediction Result</h3>
+              <canvas id="predictionCanvas"></canvas>
+
+              <div class="info">
+                <h3>🧾 Analysis Summary</h3>
+                <p><b>Image Size:</b> ${imageWidth} × ${imageHeight}px</p>
+                <p><b>Tumor Exists:</b> ${
+                  predictions.length > 0 ? "✅ Yes" : "❌ No"
+                }</p>
+
+                ${
+                  predictions.length > 0
+                    ? `
+                  <table>
+                    <tr>
+                      <th>#</th>
+                      <th>Class</th>
+                      <th>Confidence</th>
+                      <th>X</th>
+                      <th>Y</th>
+                      <th>Width</th>
+                      <th>Height</th>
+                      <th>Stage</th>
+                    </tr>
+                    ${detailsHTML}
+                  </table>`
+                    : "<p>No tumors detected.</p>"
+                }
+              </div>
+            `;
+
+            const finalCanvas = document.getElementById("predictionCanvas");
+            const finalCtx = finalCanvas.getContext("2d");
+            finalCanvas.width = imageWidth;
+            finalCanvas.height = imageHeight;
+
+            finalCtx.drawImage(img, 0, 0, imageWidth, imageHeight);
+            finalCtx.lineWidth = 4;
+            finalCtx.strokeStyle = "red";
+            finalCtx.font = "18px Arial";
+            finalCtx.fillStyle = "red";
+
+            predictions.forEach((p) => {
+              const x = p.x - p.width / 2;
+              const y = p.y - p.height / 2;
+              finalCtx.strokeRect(x, y, p.width, p.height);
+              finalCtx.fillText(
+                `${p.class} (${(p.confidence * 100).toFixed(1)}%)`,
+                x,
+                y > 20 ? y - 5 : y + 20
+              );
+            });
+          } catch (error) {
+            document.getElementById("result").innerHTML =
+              `<p style="color:red;">❌ Error: ${error.message}</p>`;
+          }
+        };
+      };
+      reader.readAsDataURL(file);
+    });
+  </script>
+</body>
+</html>
